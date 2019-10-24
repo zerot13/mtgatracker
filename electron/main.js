@@ -1,5 +1,6 @@
 const console = require('console');
 const jwt = require('jsonwebtoken');
+const { inspectorRouter } = require("./inspectorApi")
 
 global.updateReady = false
 global.updateDownloading = false
@@ -10,13 +11,19 @@ if (handleStartupEvent()) {
   return;
 }
 
-const { app, ipcMain, BrowserWindow } = require('electron')
+const { app, ipcMain, BrowserWindow, Tray, Menu, nativeImage } = require('electron')
 const fs = require('fs');
 const path = require('path')
 const keytar = require('keytar')
 const uuidv4 = require('uuid/v4');
 const request = require('request')
 const crypto = require("crypto")
+
+// Check if our instance is the primary instance
+if(app.makeSingleInstance(focusMTGATracker)) {
+  app.quit();
+  return;
+}
 
 let checksum = (str, algorithm, encoding) => {
     return crypto
@@ -25,7 +32,7 @@ let checksum = (str, algorithm, encoding) => {
         .digest(encoding || 'hex')
 }
 
-const API_URL = "https://gx3.mtgatracker.com/str-85b6a06b2d213fac515a8ba7b582387a-p3/mtgatracker-prod-EhDvLyq7PNb";
+const API_URL = "https://gxt.mtgatracker.com/str-85b6a06b2d213fac515a8ba7b582387a-pt/mtgatracker-prod-EhDvLyq7PNb";
 
 // check if we have saved a UUID for this tracker. If not, generate one
 keytar.getPassword("mtgatracker", "tracker-id").then(savedTrackerID => {
@@ -69,21 +76,25 @@ const firstRun = process.argv[1] == '--squirrel-firstrun';
 global.firstRun = firstRun
 const runFromSource = !process.execPath.endsWith("MTGATracker.exe")
 
+function updateCheck() {
+  if (!global.updateDownloading && !global.checkInProgress) {
+    global.checkInProgress = true
+    updater.check((err, status) => {
+      if (!err && status) {
+        // Download the update
+        global.updateDownloading = true;
+        updater.download()
+      }
+      // the check is complete, we can run the check again now
+      global.checkInProgress = false
+    })
+  }
+}
+
 if (!firstRun && fs.existsSync(path.resolve(path.dirname(process.execPath), '..', 'update.exe'))) {
-  setInterval(() => {
-    if (!global.updateDownloading && !global.checkInProgress) {
-      global.checkInProgress = true
-      updater.check((err, status) => {
-        if (!err && status) {
-          // Download the update
-          global.updateDownloading = true;
-          updater.download()
-        }
-        // the check is complete, we can run the check again now
-        global.checkInProgress = false
-      })
-    }
-  }, 10000)
+  updateCheck() // check once; setInterval fires the first time AFTER the timeout
+  setInterval(updateCheck,    1000     * 60       * 60     * 2)
+                          //  1 second * 1 minute * 1 hour * 2 = 2 hours
 }
 
 const findProcess = require('find-process');
@@ -94,21 +105,6 @@ updater.autoUpdater.on('update-downloaded', (e) => {
     text: "A new version has been downloaded. Restart to update!"
   })
 })
-
-if (!firstRun && fs.existsSync(path.resolve(path.dirname(process.execPath), '..', 'update.exe'))) {
-  setInterval(() => {
-    if (!global.updateDownloading) {
-      updater.check((err, status) => {
-        if (!err && status) {
-          // Download the update
-          updater.download()
-          global.updateDownloading = true;
-        }
-      })
-    }
-  }, 1000)
-}
-
 
 // adapted from the excellent medium post:
 // https://medium.com/@hql287/persisting-windows-state-in-electron-using-javascript-closure-17fc0821d37
@@ -203,6 +199,10 @@ const PY_MODULE = 'mtgatracker_backend' // without .py suffix
 let pyProc = null
 let pyPort = null
 
+let appDataRoaming = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + 'Library/Preferences' : '/var/local')
+let logPath = path.join(appDataRoaming, "..", "LocalLow", "Wizards Of The Coast", "MTGA", "output_log.txt");
+
+
 let getBooleanArg = (short, long) => {
   let shortIdx = process.argv.indexOf(short)
   let longIdx = process.argv.indexOf(long)
@@ -218,20 +218,19 @@ if (debugCmdOpt) {
   settings.set('debug', true)
 }
 
-let debugFile = false;
-if (debugFileCmdOpt) {
-    debugFile = true;
-    console.log("Using debug file")
-}
-
 if (frameCmdOpt) {
   settings.set('useFrame', true)
+}
+
+// Hack to update to new structure
+if (!settings.has('winLossCounter.alltime.total') && settings.has('winLossCounter.win') && settings.has('winLossCounter.loss')) {
+  settings.set('winLossCounter.alltime.total', settings.get('winLossCounter'));
 }
 
 let debug = settings.get('debug', false);
 let mtgaOverlayOnly = settings.get('mtgaOverlayOnly', true);
 let showErrors = settings.get('showErrors', false);
-let incognito = settings.get('incognito', false);
+let sendAnonymousUsageInfo = settings.get('sendAnonymousUsageInfo', false);
 let showInspector = settings.get('showInspector', true);
 let useFrame = settings.get('useFrame', false);
 let staticMode = settings.get('staticMode', false);
@@ -245,8 +244,13 @@ let showGameTimer = settings.get('showGameTimer', true);
 let showChessTimers = settings.get('showChessTimers', true);
 let hideDelay = settings.get('hideDelay', 10);
 let invertHideMode = settings.get('invertHideMode', false);
-let winLossCounter = settings.get('winLossCounter', {win: 0, loss: 0});
-let showWinLossCounter = settings.get('showWinLossCounter', true);
+let rollupMode = settings.get('rollupMode', true);
+let winLossCounter = settings.get('winLossCounter', {alltime:{total: {win: 0, loss: 0}}});
+winLossCounter.daily = {total: {win: 0, loss: 0}};
+let showTotalWinLossCounter = settings.get('showTotalWinLossCounter', true);
+let showDeckWinLossCounter = settings.get('showDeckWinLossCounter', true);
+let showDailyTotalWinLossCounter = settings.get('showDailyTotalWinLossCounter', true);
+let showDailyDeckWinLossCounter = settings.get('showDailyDeckWinLossCounter', true);
 let showVaultProgress = settings.get('showVaultProgress', true);
 let lastCollection = settings.get('lastCollection', {});
 let lastVaultProgress = settings.get('lastVaultProgress', 0);
@@ -255,7 +259,49 @@ let sortMethod = settings.get('sortMethod', 'draw');
 let useFlat = settings.get('useFlat', true);
 let useMinimal = settings.get('useMinimal', true);
 let zoom = settings.get('zoom', 0.8);
+let recentCards = settings.get('recentCards', []);
+let recentCardsQuantityToShow = settings.get('recentCardsQuantityToShow', 10);
+let minToTray = settings.get('minToTray', false);
+logPath = settings.get("logPath", logPath)
+let showUIButtons = settings.get('showUIButtons',true)
+let showHideButton = settings.get('showHideButton',true)
+let showMenu = settings.get('showMenu',true)
+let blankInventory = {
+                        wcCommon: 0,
+                        wcUncommon: 0,
+                        wcRare: 0,
+                        wcMythic: 0,
+                        boosters: [],
+                        draftTokens: 0,
+                        gems: 0,
+                        gold: 0,
+                        vaultProgress: 0,
+                        wcTrackPosition: 0,
+                        boosters: [
+                          {collationId: 100005, count: 0},
+                          {collationId: 100006, count: 0},
+                          {collationId: 100007, count: 0},
+                          {collationId: 100008, count: 0},
+                          {collationId: 100009, count: 0},
+                          {collationId: 100010, count: 0},
+                        ]
+                      }
+let inventory = settings.get('inventory',blankInventory)
 
+let inventorySpent = JSON.parse(JSON.stringify(blankInventory))
+let inventoryGained = JSON.parse(JSON.stringify(blankInventory))
+let blankBoosters = {100005: 0,100006: 0,100007: 0,100008: 0,100009: 0,100010: 0}
+inventorySpent.boosters = JSON.parse(JSON.stringify(blankBoosters))
+inventoryGained.boosters = JSON.parse(JSON.stringify(blankBoosters))
+
+global.historyEvents = []
+
+let debugFile = false;
+if (debugFileCmdOpt) {
+    debugFile = true;
+    logPath = debugFileCmdOpt;
+    console.log("Using debug file")
+}
 
 let kill_server = true;
 let noFollow = false;
@@ -264,6 +310,94 @@ let readFullFile = false;
 if (fullFileCmdOpt) {
   readFullFile = true;
 }
+
+ipcMain.on('updateWinLossCounters', (e,arg) => {
+  if (arg.key == 'all'){
+    global['winLossCounter'] = arg.value;
+    settings.set('winLossCounter', arg.value);
+  } else {
+    global['winLossCounter']['alltime'][arg.key] = arg.value.alltime;
+    global['winLossCounter']['daily'][arg.key] = arg.value.daily;
+    settings.set('winLossCounter.alltime.' + arg.key, arg.value.alltime);
+  }
+
+  try {
+    mainWindow.webContents.send('counterChanged',global['winLossCounter'],arg);
+    if ( settingsWindow != null){
+      settingsWindow.webContents.send('counterChanged',global['winLossCounter']);
+    }
+  } catch (e) {
+    console.log("could not send counterChanged message");
+    console.log(e);
+  }
+})
+
+ipcMain.on('lastVaultProgressChanged', (e,new_progress) => {
+  global.lastVaultProgress = new_progress
+  settings.set('lastVaultProgress',new_progress)
+  try {
+    if ( collectionWindow != null){
+      collectionWindow.webContents.send('lastVaultProgressChanged',global['lastVaultProgress']);
+    }
+  } catch (e) {
+    console.log("could not send lastVaultProgressChanged message");
+    console.log(e);
+  }
+})
+
+ipcMain.on('inventoryChanged', (e,new_inventory) => {
+  let fields = ['gold','gems','wcCommon','wcUncommon','wcRare','wcMythic']
+  for (let field of fields) {
+    let changed = new_inventory[field] - global.inventory[field]
+    if (changed > 0){
+      global.inventoryGained[field] += changed
+    } else {
+      global.inventorySpent[field] -= changed
+    }
+  }
+
+  for (let new_set of new_inventory.boosters){
+    let old_set = global.inventory.boosters.find(x => x.collationId == new_set.collationId) || null
+    let changed = 0
+    if (old_set == null){
+      changed = new_set.count
+      global.inventoryGained.boosters[new_set.collationId] = 0
+      global.inventorySpent.boosters[new_set.collationId] = 0
+    } else {
+      changed = new_set.count - old_set.count
+    }
+    if (changed > 0){
+      global.inventoryGained.boosters[new_set.collationId] += changed
+    } else {
+      global.inventorySpent.boosters[new_set.collationId] -= changed
+    }
+  }
+
+  global.inventory = new_inventory
+  settings.set('inventory',new_inventory)
+
+  try {
+    if ( collectionWindow != null){
+      collectionWindow.webContents.send('inventoryChanged',global.inventory,global.inventorySpent,global.inventoryGained);
+    }
+  } catch (e) {
+    console.log("could not send inventoryChanged message");
+    console.log(e);
+  }
+})
+
+ipcMain.on('recentCardsChanged', (e,new_recent) => {
+  global.recentCards.unshift(new_recent)
+  settings.set('recentCards',global.recentCards)
+  try {
+    if ( collectionWindow != null){
+      collectionWindow.webContents.send('recentCardsChanged',new_recent);
+    }
+  } catch (e) {
+    console.log("could not send recentCardsChanged message");
+    console.log(e);
+  }
+})
 
 ipcMain.on('messageAcknowledged', (event, arg) => {
   let acked = settings.get("messagesAcknowledged", [])
@@ -276,6 +410,38 @@ ipcMain.on('settingsChanged', (event, arg) => {
   global[arg.key] = arg.value;
   settings.set(arg.key, arg.value)
   mainWindow.webContents.send('settingsChanged')
+})
+
+ipcMain.on('hideRequest', (event, arg) => {
+  if (historyWindow) {
+    try {
+      historyWindow.webContents.send('hideRequest', arg)
+    } catch (error) {
+      console.log("couldn't send stdout message to history window, likely already destroyed")
+    }
+  }
+})
+
+ipcMain.on('clearGameHistory', event => {
+  global.historyEvents = []
+  if (historyWindow) {
+    try {
+      historyWindow.webContents.send("clearGameHistory")
+    } catch (error) {
+      console.log("couldn't send stdout message to history window, likely already destroyed")
+    }
+  }
+})
+
+ipcMain.on('gameHistoryEvent', (event, arg) => {
+  global.historyEvents.push(arg)
+  if (historyWindow) {
+    try {
+      historyWindow.webContents.send('gameHistoryEventSend', arg)
+    } catch (error) {
+      console.log("couldn't send stdout message to main window, likely already destroyed")
+    }
+  }
 })
 
 ipcMain.on('tosAgreed', (event, arg) => {
@@ -291,7 +457,7 @@ ipcMain.on('tosAgreed', (event, arg) => {
 
 let openSettingsWindow = () => {
   if(settingsWindow == null) {
-    let settingsWidth = debug ? 1400 : 800;
+    let settingsWidth = debug ? 1400 : 1025;
 
     const settingsWindowStateMgr = windowStateKeeper('settings')
     settingsWindow = new BrowserWindow({width: settingsWidth,
@@ -321,7 +487,116 @@ let openSettingsWindow = () => {
   settingsWindow.once('ready-to-show', () => {
     settingsWindow.show()
   })
+  settingsWindow.on('close', () => {global.settingsPaneIndex = 'general'})
 }
+
+let openCollectionWindow = () => {
+  if(collectionWindow == null) {
+    let collectionWidth = debug ? 1400 : 1025;
+
+    const collectionWindowStateMgr = windowStateKeeper('collection')
+    collectionWindow = new BrowserWindow({width: collectionWidth,
+                                        height: 850,
+                                        toolbar: false,
+                                        titlebar: false,
+                                        title: false,
+                                        maximizable: false,
+                                        show: false,
+                                        icon: "img/icon_small.ico",
+                                        x: collectionWindowStateMgr.x,
+                                        y: collectionWindowStateMgr.y})
+    collectionWindowStateMgr.track(collectionWindow)
+    collectionWindow.setMenu(null)
+    collectionWindow.loadURL(require('url').format({
+      pathname: path.join(__dirname, 'collection.html'),
+      protocol: 'file:',
+      slashes: true
+    }))
+    if (debug) {
+      collectionWindow.webContents.openDevTools()
+    }
+    collectionWindow.on('closed', function () {
+      collectionWindow = null;
+    })
+  }
+  collectionWindow.once('ready-to-show', () => {
+    collectionWindow.show()
+  })
+}
+
+let openInspectorWindow = () => {
+  if(inspectorWindow == null) {
+    let settingsWidth = debug ? 1400 : 1100;
+
+    const inspectorWindowStateMgr = windowStateKeeper('settings')
+    inspectorWindow = new BrowserWindow({width: settingsWidth,
+                                        height: 800,
+                                        toolbar: false,
+                                        titlebar: false,
+                                        title: false,
+                                        show: false,
+                                        icon: "img/icon_small.ico",
+                                        x: inspectorWindowStateMgr.x,
+                                        y: inspectorWindowStateMgr.y})
+    inspectorWindowStateMgr.track(inspectorWindow)
+    inspectorWindow.setMenu(null)
+    inspectorWindow.loadURL(require('url').format({
+      pathname: path.join(__dirname, 'inspector/index.html'),
+      protocol: 'file:',
+      slashes: true
+    }))
+    if (debug) {
+      inspectorWindow.webContents.openDevTools()
+    }
+    inspectorWindow.on('closed', function () {
+      inspectorWindow = null;
+    })
+  }
+  inspectorWindow.once('ready-to-show', () => {
+    inspectorWindow.show()
+  })
+  inspectorWindow.on('close', () => {global.settingsPaneIndex = 'general'})
+}
+
+
+
+let openHistoryWindow = () => {
+  if(historyWindow == null) {
+    let historyWidth = debug ? 1200 : 400;
+
+    const historyWindowStateMgr = windowStateKeeper('history')
+    historyWindow = new BrowserWindow({width: historyWidth,
+                                        height: 800,
+                                        toolbar: false,
+                                        titlebar: false,
+                                        title: false,
+                                        maximizable: false,
+                                        show: false,
+                                        transparent: !(debug || useFrame),
+                                        frame: (debug || useFrame),
+                                        alwaysOnTop: true,
+                                        icon: "img/icon_small.ico",
+                                        x: historyWindowStateMgr.x,
+                                        y: historyWindowStateMgr.y})
+    historyWindowStateMgr.track(historyWindow)
+    historyWindow.setMenu(null)
+    historyWindow.loadURL(require('url').format({
+      pathname: path.join(__dirname, 'game_history.html'),
+      protocol: 'file:',
+      slashes: true
+    }))
+    if (debug) {
+      historyWindow.webContents.openDevTools()
+    }
+    historyWindow.on('closed', function () {
+      historyWindow = null;
+    })
+  }
+  historyWindow.once('ready-to-show', () => {
+    historyWindow.show()
+  })
+}
+
 
 let openTOSWindow = () => {
   if(tosWindow == null) {
@@ -352,6 +627,9 @@ let openTOSWindow = () => {
 }
 
 ipcMain.on('openSettings', openSettingsWindow)
+ipcMain.on('openCollection', openCollectionWindow)
+ipcMain.on('openInspector', openInspectorWindow)
+ipcMain.on('openHistory', openHistoryWindow)
 
 app.disableHardwareAcceleration()
 
@@ -376,34 +654,27 @@ const getPyBinPath = () => {
     venv_path_x = path.join(__dirname, "..", "venv", "Scripts", "python")
     fallback_path = "python"
     if (fs.existsSync(venv_path_win)) {
-        return venv_path_win + " -u"
+        return venv_path_win
     } else if (fs.existsSync(venv_path_x)) {
-        return venv_path_x + " -u"
+        return venv_path_x
     } else {
-        return fallback_path + " -u" // ? shrug
+        return fallback_path // ? shrug
     }
   }
 }
 
-const getLogFilePath = () => {
-    // TODO: make this cmd-line configurable
-    return path.join(__dirname, "..", "app", "example_logs", "kld", "output_log.txt")
-}
-
 const selectPort = () => {
-  pyPort = 8089
+  pyPort = 5678
   return pyPort
 }
 
 port = selectPort()
-logPath = getLogFilePath()
+global.port = port;
 
 const generateArgs = () => {
     var args = ["-p", port]
-    if (debugFile) {
-        args.push("-i")
-        args.push(logPath)
-    }
+    args.push("-i")
+    args.push(logPath)
     if (noFollow) {
         args.push('-nf')
     }
@@ -445,11 +716,24 @@ const cleanupPyProc = (cb)  => {
 
 const createPyProc = () => {
   let script = getScriptPath()
+  let pbPath = getPyBinPath()
 
+  let args = generateArgs()
   if (guessPackaged()) {
-    pyProc = require('child_process').spawn(script, generateArgs())
+    try {
+      mainWindow.webContents.send('stdout', {text: `calling: spawn(${script}, ${args}}`})
+    } catch (error) {
+      console.log("couldn't send stdout message to main window, likely already destroyed")
+    }
+    pyProc = require('child_process').spawn(script, args)
   } else {
-    pyProc = require('child_process').spawn(getPyBinPath(), [script].concat(generateArgs()), {shell: true})
+    let pbArgs = ['-u', script].concat(args)  // -u for unbuffered python
+    try {
+      mainWindow.webContents.send('stdout', {text: `calling: spawn(${pbPath}, ${pbArgs})`})
+    } catch (error) {
+      console.log("couldn't send stdout message to main window, likely already destroyed")
+    }
+    pyProc = require('child_process').spawn(pbPath, pbArgs)
   }
 
   if (pyProc != null) {
@@ -457,13 +741,21 @@ const createPyProc = () => {
     pyProc.stderr.on('data', function(data) {
       console.log("py stderr: " + data.toString());
       if (mainWindow) {
-        mainWindow.webContents.send('stdout', {text: "py stderr:" + data.toString()})
+        try {
+          mainWindow.webContents.send('stdout', {text: "py stderr:" + data.toString()})
+        } catch (error) {
+          console.log("couldn't send stdout message to main window, likely already destroyed")
+        }
       }
     });
     pyProc.stdout.on('data', function(data) {
       console.log("py stdout:" + data.toString());
       if (mainWindow) {
-        mainWindow.webContents.send('stdout', {text: "py stdout:" + data.toString()})
+        try {
+          mainWindow.webContents.send('stdout', {text: "py stdout:" + data.toString()})
+        } catch (error) {
+          console.log("couldn't send stdout message to main window, likely already destroyed")
+        }
       }
     });
     pyProc.on('exit', function(code) {
@@ -481,7 +773,7 @@ global.API_URL = API_URL;
 global.debug = debug;
 global.mtgaOverlayOnly = mtgaOverlayOnly;
 global.showErrors = showErrors;
-global.incognito = incognito;
+global.sendAnonymousUsageInfo = sendAnonymousUsageInfo;
 global.showInspector = showInspector;
 global.useFrame = useFrame;
 global.staticMode = staticMode;
@@ -492,10 +784,14 @@ global.leftMouseEvents = leftMouseEvents;
 global.showGameTimer = showGameTimer;
 global.showChessTimers = showChessTimers;
 global.invertHideMode = invertHideMode;
+global.rollupMode = rollupMode;
 global.hideDelay = hideDelay;
 global.mouseEvents = mouseEvents;
 global.winLossCounter = winLossCounter;
-global.showWinLossCounter = showWinLossCounter;
+global.showTotalWinLossCounter = showTotalWinLossCounter;
+global.showDeckWinLossCounter = showDeckWinLossCounter;
+global.showDailyTotalWinLossCounter = showDailyTotalWinLossCounter;
+global.showDailyDeckWinLossCounter = showDailyDeckWinLossCounter;
 global.showVaultProgress = showVaultProgress;
 global.lastVaultProgress = lastVaultProgress;
 global.lastCollection = lastCollection;
@@ -507,6 +803,18 @@ global.sortMethod = sortMethod
 global.useFlat = useFlat
 global.useMinimal = useMinimal
 global.zoom = zoom
+global.recentCards = recentCards
+global.recentCardsQuantityToShow = recentCardsQuantityToShow
+global.logPath = logPath
+global.minToTray = minToTray
+global.historyZoom = settings.get("history-zoom", 1.0)
+global.settingsPaneIndex = "general"
+global.showUIButtons = showUIButtons
+global.showHideButton = showHideButton
+global.showMenu = showMenu
+global.inventory = inventory
+global.inventorySpent = inventorySpent
+global.inventoryGained = inventoryGained
 
 /*************************************************************
  * window management
@@ -514,7 +822,10 @@ global.zoom = zoom
 
 let mainWindow = null
 let settingsWindow = null
+let inspectorWindow = null
+let historyWindow = null
 let tosWindow = null
+let collectionWindow = null
 
 let window_width = 354;
 let window_height = 200;
@@ -523,13 +834,60 @@ if (debug) {
     window_height = 700;
 }
 
+const openDeckTrackerHandler = (menuItem, browserWindow, event) => {
+    focusMTGATracker();
+}
+
+const openSettingsHandler = (menuItem, browserWindow, event) => {
+  focusMTGATrackerSettings();
+}
+
+const openHistoryHandler = (menuItem, browserWindow, event) => {
+  focusMTGAHistory();
+}
+
+const openInspectorHandler = (menuItem, browserWindow, event) => {
+  focusInspector();
+}
+
+const openCollectionHandler = (menuItem, browserWindow, event) => {
+  focusCollection();
+}
+
+const closeTrackerHandler = (menuItem, browserWindow, event) => {
+  mainWindow.close();
+}
+
+let tray = null;
+
+const createTray = () => {
+  if(tray==null) {
+    let iconFile = 'icon_tray.png'
+    let iconPath = path.join(__dirname,'img', iconFile);
+    console.log(fs.existsSync(iconPath))
+    let nativeIcon = nativeImage.createFromPath(iconPath)
+    tray = new Tray(nativeIcon)
+    const contextMenu = Menu.buildFromTemplate([
+      {label: "DeckTracker", type: "normal", click: openDeckTrackerHandler},
+      {label: "Settings", type: "normal", click: openSettingsHandler},
+      {label: "Inspector", type: "normal", click: openInspectorHandler},
+      {label: "Collection", type: "normal", click: openCollectionHandler},
+      {label: "History", type: "normal", click: openHistoryHandler},
+      {label: "Quit", type: "normal", click: closeTrackerHandler }
+    ])
+    tray.setToolTip('MTGA Tracker')
+    tray.setContextMenu(contextMenu)
+    tray.on("double-click", (event, bounds) => openDeckTrackerHandler())
+  }
+}
+
 const createMainWindow = () => {
   const mainWindowStateMgr = windowStateKeeper('main')
   mainWindow = new BrowserWindow({width: window_width,
                                   height: window_height,
                                   show: false,
-                                  transparent: !(debug || useFrame),
                                   resizable: (debug || useFrame),
+                                  transparent: !(debug || useFrame),
                                   frame: (debug || useFrame),
                                   alwaysOnTop: true,
                                   toolbar: false,
@@ -539,6 +897,7 @@ const createMainWindow = () => {
                                   icon: "img/icon_small.ico",
                                   x: mainWindowStateMgr.x,
                                   y: mainWindowStateMgr.y})
+  createTray();
   mainWindowStateMgr.track(mainWindow)
   mainWindow.loadURL(require('url').format({
     pathname: path.join(__dirname, 'index.html'),
@@ -548,6 +907,11 @@ const createMainWindow = () => {
   mainWindow.on('closed', () => {
     console.log("main window closed")
     killServer()
+  })
+  mainWindow.on('minimize', () => {
+    minToTray = settings.get('minToTray', false);
+    createTray();
+    mainWindow.setSkipTaskbar(minToTray)
   })
 
   if (debug) {
@@ -567,6 +931,7 @@ const createMainWindow = () => {
   if (!versionsAcknowledged.includes(app.getVersion())) {
     versionsAcknowledged.push(app.getVersion())
     settings.set("versionsAcknowledged", versionsAcknowledged)
+    global.settingsPaneIndex = 'about'
     openSettingsWindow()
   }
 }
@@ -576,6 +941,68 @@ const openFirstWindow = () => {
     createMainWindow()
   } else {
     openTOSWindow()
+  }
+}
+
+function focusMTGATracker() {
+  if(mainWindow) {
+    mainWindow.setSkipTaskbar(false);
+    mainWindow.show();
+    if(mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.focus();
+  } else {
+    openFirstWindow();
+  }
+}
+
+function focusMTGATrackerSettings() {
+  if(settingsWindow) {
+    settingsWindow.show();
+    if(settingsWindow.isMinimized()) {
+      settingsWindow.restore();
+    }
+    settingsWindow.focus();
+  } else {
+    openSettingsWindow();
+  }
+}
+
+function focusCollection() {
+  if(collectionWindow) {
+    collectionWindow.show();
+    if(collectionWindow.isMinimized()) {
+      collectionWindow.restore();
+    }
+    collectionWindow.focus();
+  } else {
+    openCollectionWindow();
+  }
+}
+
+function focusInspector() {
+  if(inspectorWindow) {
+    inspectorWindow.show();
+    if(inspectorWindow.isMinimized()) {
+      inspectorWindow.restore();
+    }
+    inspectorWindow.focus();
+  } else {
+    openInspectorWindow();
+  }
+
+}
+
+function focusMTGAHistory() {
+  if(historyWindow) {
+    historyWindow.show();
+    if(historyWindow.isMinimized()) {
+      historyWindow.restore();
+    }
+    historyWindow.focus();
+  } else {
+    openHistoryWindow();
   }
 }
 

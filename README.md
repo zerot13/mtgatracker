@@ -1,7 +1,7 @@
 # MTGATracker
 
 [![Discord](https://img.shields.io/discord/425145310684250112.svg)](https://discordapp.com/channels/425145310684250112/425145310684250114)
-[![Build Status](https://travis-ci.org/shawkinsl/mtga-tracker.svg?branch=master)](https://travis-ci.org/shawkinsl/mtga-tracker)
+[![Build Status](https://ci.appveyor.com/api/projects/status/github/mtgatracker/mtgatracker?svg=true)](https://ci.appveyor.com/project/shawkinsl/mtgatracker)
 [![Github All Releases](https://img.shields.io/github/downloads/shawkinsl/mtga-tracker/total.svg)](https://github.com/shawkinsl/mtga-tracker/releases)
 [![Github All Releases](https://wt-bd90f3fae00b1572ed028d0340861e6a-0.run.webtask.io/mtga-tracker-game/games/count?badge=true&fixcache)](https://github.com/shawkinsl/mtga-tracker/releases)
 [![Unique Users](https://wt-bd90f3fae00b1572ed028d0340861e6a-0.run.webtask.io/mtga-tracker-game/users/count?badge=true&fixcache)](https://github.com/shawkinsl/mtga-tracker/releases)
@@ -12,7 +12,7 @@
 <!-- [![Coveralls github](https://img.shields.io/coveralls/github/shawkinsl/mtga-tracker.svg)](https://coveralls.io) <!-- TODO: this -->
 MTGA Tracker is an electron-based app that helps you track your MTGA decks!
 
-![Tracker Features](https://i.imgur.com/drjM4D7.png)
+![Tracker Features](https://raw.githubusercontent.com/mtgatracker/mtgatracker/master/.readme_data/new_tracker_guide_graphic.png)
 
 <!-- [![Travis](https://img.shields.io/travis/shawkinsl/mtga-tracker.svg)](https://travis-ci.org/shawkinsl/mtga-tracker) --><!-- TODO: this -->
 <!-- [![Code Climate](https://img.shields.io/codeclimate/shawkinsl/mtga-tracker.svg)](https://codeclimate.com/github/shawkinsl/mtga-tracker) --><!-- TODO: this -->
@@ -74,17 +74,70 @@ Note that if you choose to skip Git Bash, you're on your own w.r.t. formatting s
     # read more about virtualenv here: http://www.pythonforbeginners.com/basics/how-to-use-python-virtualenv
     pip install -r requirements.txt
     cd electron
+    # tell npm to use python2.7 for node-gyp
+    npm config set python python2.7
     npm install .
     ```
 1. If all went well, you should now be able to:
     ```bash
-    ./node_modules/.bin/electron .
+    npm start
     ```
     And the decktracker UI should launch!
     
-    Note: check out debug flags, which can be set directly in
-    [main.js](https://github.com/shawkinsl/mtga-tracker/blob/master/electron/main.js#L22)
+    Note: check out debug flags, which can be set via command line
+    [main.js](https://github.com/shawkinsl/mtga-tracker/blob/master/electron/main.js#L222)
     
+### FAQ
+
+**Something with the tracker isn't working for me! What do I do?**
+
+Check out our troubleshooting guide [here](https://github.com/mtgatracker/mtgatracker/wiki/Troubleshooting). If
+nothing in here helps, please send us a message in the #troubleshooting channel on Discord with the following template:
+
+> Help! My tracker is `<short description of issue>`.
+> 
+> Here's a screenshot of my tracker in debug mode:
+>
+> `<insert a screenshot of MTGATracker in debug mode, including the debug output in the console on the right side>`
+>
+> ![Example Screenshot](https://raw.githubusercontent.com/shawkinsl/mtga-tracker/master/.readme_data/example_debug_screenshot.png)
+
+**Something with Inspector isn't working for me! What do I do?**
+
+Please message Spencatro#6059 on Discord **privately** with the following template:
+
+> Help! Inspector is `<short description of issue>`.
+>
+> I signed in to Inspector using `<discord or twitch>`, and my username is `<twitch or discord username>`.
+> My MTGA username is `<your username, case sensitive>`.
+> The first 8 digits of my trackerID is `<the first 8 digits of your tracker key, located in
+tracker settings under "Inspector">`.
+
+**Why doesn't MTGATracker properly handle sideboarding in Competitive Draft (etc)?**
+
+This is actually an issue with WotC's logging. There is no way for us to determine what happens during sideboarding 
+based on what is written to the log. We've filed the following bug report with WotC and will be ecstatic to fix our 
+stuff once they resolve it:
+
+> Bug report: I tried to replace my entire deck with my sideboard during a competitive draft event, but something went wrong!
+>
+> OK, nothing actually went wrong, but the point of this bug report is that based on the log, there is no way to tell what happened with the sideboard anyways! The log doesn't properly record sideboard events.
+>
+> It looks like the client is attempting to tell the server that... something happened with sideboarding with this log message:
+> 
+>    (Filename: C:\buildslave\unity\build\Runtime/Export/Debug.bindings.h Line: 43)
+>    
+>    [UnityCrossThreadLogger]Received unhandled GREMessageType: GREMessageType_SubmitDeckReq
+>    { "type": "GREMessageType_SubmitDeckReq", "systemSeatIds": [ 1 ], "msgId": 638, "gameStateId": 455, "submitDeckReq": { "deck": { "deckCards": [ 68510, 68544, 68544, 68728, 68496, 68496, 68496, 68628, 68628, 68681, 68727, 68522, 68522, 68523, 68612, 68534, 68546, 68531, 68535, 68549, 68667, 68529, 68516, 68497, 68526, 67017, 67017, 67017, 67017, 67017, 67017, 67017, 67019, 67019, 67019, 67019, 67019, 67019, 67019, 67019 ], "sideboardCards": [ 68525, 68537, 68537, 68464, 68464, 68464, 68479, 68539, 68549, 68549, 68601, 68703, 68606, 68477, 68542, 68611, 68507, 68523, 68527, 68522 ] } } }
+>     
+>    (Filename: C:\buildslave\unity\build\Runtime/Export/Debug.bindings.h Line: 43)
+>
+> However, the contents of that log chunk is incorrect (i.e. the cards I actually sideboarded in are still in the sideboardCards array).
+> 
+> This issue is causing issues with third party log tracking programs.
+> 
+> Thanks!
+
 ### Building
 
 Building from windows? Try `sh build.sh` from git bash. If that doesn't work, get in touch with @shawkinsl to figure it
@@ -121,8 +174,7 @@ The front end of MTGA Tracker is an electron app that uses node / websocket to c
 
 Currently MTGATracker ~~is self-signed.~~ (Edit: since this doesn't do anything, we won't bother until
 we get a real cert. Did you know that code-signing certs cost over $100 a year?! We didn't.)
-So MTGATracker will likely go unsigned unless / until it gets at least a few hundred
-[in donations](https://github.com/shawkinsl/mtga-tracker/blob/master/contributors/fundraising.md) ;)
+So MTGATracker will likely go unsigned for now.
  
 Regardless, under the guidance of this [stackoverflow question](https://stackoverflow.com/questions/84847/how-do-i-create-a-self-signed-certificate-for-code-signing-on-windows),
 use the following commands to self-sign binaries (not really that useful, but good practice in case MTGATracker ever
@@ -187,18 +239,3 @@ Special shoutout to [fyears/electron-python-example](https://github.com/fyears/e
 a truly excellent tutotial to launchpad off of!
 
 MTGA Tracker is licensed under the [MIT License](https://opensource.org/licenses/MIT).
-
-#### Core contributors
-
-If this list gets too heavy, please refer to [contributors/core.yml](https://github.com/shawkinsl/mtga-tracker/blob/master/contributors/core.yml)
-
-- [shawkinsl](https://github.com/shawkinsl)
-- MatteyRitch
-
-#### Collaborators
-
-If this list gets too heavy, please refer to [contributors/collab.yml](https://github.com/shawkinsl/mtga-tracker/blob/master/contributors/core.yml)
-
-- emerald000
-- isharacomix
-- windbagy

@@ -74,7 +74,7 @@ def block_watch_task(in_queue, out_queue):
                 # this is not valid json, we need to surround it with a header such that it's an object instead of a list
                 json_str = '{{"{}": {}}}'.format(block_title, json_str)
         elif block_lines[1].strip() == "{":
-            """
+            """ DEPRECATED
             these logs look like:
             
             [UnityCrossThreadLogger]6/7/2018 7:21:03 PM: Match to 26848417E29213FE: GreToClientEvent
@@ -88,19 +88,39 @@ def block_watch_task(in_queue, out_queue):
                 pass
             block_title = block_lines[0].split(" ")[-1]
             json_str = "\n".join(block_lines[1:])
-        elif block_lines[0].strip().endswith("{"):
+        elif block_lines[1].strip()[0] == "{":
+
+            """
+            these logs look like:
+
+            [UnityCrossThreadLogger]6/7/2018 7:21:03 PM: Match to 26848417E29213FE: GreToClientEvent
+            { "json": "stuff" }
+            extra_stuff_down_here
+            """
+            try:
+                timestamp = dateutil.parser.parse(block_lines[0].split("]")[1].split(": ")[0])
+            except:
+                pass
+            block_title = block_lines[0].split(" ")[-1]
+            json_str = "\n".join(block_lines[1:])
+        elif block_lines[1].strip().endswith("{"):
             """
             these blocks looks like: 
             
-            [UnityCrossThreadLogger]7/2/2018 10:27:59 PM (-1) Incoming Rank.Updated {
+            [UnityCrossThreadLogger]7/2/2018 10:27:59 PM
+            (-1) Incoming Rank.Updated {
               "json": "stuff
             }
             """
-            block_title = block_lines[0].strip().split(" ")[-2]  # skip trailing {
-            json_str = "{" + "\n".join(block_lines[1:])       # just cut the first line and manually add { back in
+            block_title = block_lines[1].strip().split(" ")[-2]  # skip trailing {
+            json_str = "{" + "\n".join(block_lines[2:])          # cut the first two lines and manually add { back in
         if json_str:
             try:
                 blob = json.loads(json_str)
+                # useful: next time you're trying to figure out why a blob isn't getting through the queue:
+                # if "DirectGame" in json_str and "method" in blob:
+                #     import pprint
+                #     pprint.pprint(blob)
                 if log_line:
                     blob["log_line"] = log_line
                 if timestamp:

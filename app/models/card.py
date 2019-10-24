@@ -1,3 +1,4 @@
+from mtga import all_mtga_cards
 import util
 
 COLORMAP = {
@@ -65,7 +66,8 @@ class Card(object):
         try:
             return util.all_mtga_cards.find_one(obj["mtga_id"])
         except ValueError:
-            new_unknown_card = cls("unknown_{}".format(obj["mtga_id"]), "{}: Unknown MTGA ID".format(obj["mtga_id"]), [], [], "unknown", "unknown", "unknown", -1, obj["mtga_id"])
+            new_unknown_card = cls("unknown_{}".format(obj["mtga_id"]), "{}: Unknown MTGA ID".format(obj["mtga_id"]),
+                                   [], [], "unknown", "unknown", "unknown", "unknown", -1, obj["mtga_id"])
             util.all_mtga_cards.cards.append(new_unknown_card)
             return new_unknown_card
 
@@ -106,3 +108,21 @@ class GameCard(Card):
         self.set = new_card.set
         self.set_number = new_card.set_number
         self.mtga_id = new_card.mtga_id
+
+
+class Ability(object):
+
+    def __init__(self, name, source_id, source_instance_id, mtga_id, owner_seat_id, game_id=-1):
+        self.pretty_name = name
+        self.source_id = source_id
+        self.source_instance_id = source_instance_id
+        self.game_id = game_id
+        self.mtga_id = mtga_id
+        self.previous_iids = []
+        self.owner_seat_id = owner_seat_id
+
+    def __repr__(self):
+        if self.mtga_id != -1:
+            return "<Ability, {}: '{}...' {} iid={}>".format(all_mtga_cards.find_one(self.source_id).name, self.pretty_name[:20], self.mtga_id, self.game_id)
+        else:
+            return "<UnknownAbility: iid={}>".format(self.game_id)

@@ -19,30 +19,43 @@ def dispatch_blob(blob):
         dispatch_client_to_gre(blob)
     elif "Deck.GetDeckLists" in blob:  # this looks like it's a response to a jsonrpc method
         parsers.parse_get_decklists(blob)
+    elif "Deck.GetDeckListsV3" in blob:
+        parsers.parse_get_decklists(blob, version=3)
+    elif "Deck.UpdateDeckV3" in blob:
+        parsers.parse_update_deck_v3(blob)
     elif "block_title" in blob and (blob["block_title"] == "Event.DeckSubmit" or
                                     blob["block_title"] == "Event.GetPlayerCourse"):
         parsers.parse_event_decksubmit(blob)
+    elif "block_title" in blob and blob["block_title"] == "Event.DeckSubmitV3":
+        parsers.parse_event_decksubmit(blob, version=3)
+    elif "block_title" in blob and blob["block_title"] == "Event.GetPlayerCourseV2":
+        parsers.parse_event_decksubmit(blob, version=3)
+    # TODO: is GetPlayerCoursesV2 useful?
+    # elif "block_title" in blob and blob["block_title"] == "Event.GetPlayerCoursesV2":
+    #     parsers.parse_player_courses_v2(blob)
     elif "block_title" in blob and blob["block_title"] == "PlayerInventory.GetPlayerCardsV3":
         parsers.parse_get_player_cards_v3(blob)
     elif "block_title" in blob and (blob["block_title"] == "Draft.DraftStatus" or
                                     blob["block_title"] == "Draft.MakePick"):
         parsers.parse_draft_status(blob)
-    # PlayerInventory.GetPlayerInventory
     elif "block_title" in blob and blob["block_title"] == "PlayerInventory.GetPlayerInventory":
         parsers.pass_through("inventory", blob["playerId"], blob)
     elif "block_title" in blob and blob["block_title"] == "Rank.Updated":
         parsers.pass_through("rank_change", blob["playerId"], blob)
     elif "block_title" in blob and blob["block_title"] == "Inventory.Updated":
         parsers.pass_through("inventory_update", None, blob)
+    elif ("block_title" in blob and blob["block_title"] == "ClientToMatchServiceMessageType_ClientToGREMessage" and
+          "Payload" in blob and "SubmitDeckResp" in blob['Payload']):
+        parsers.parse_sideboard_submit(blob)
     elif "matchGameRoomStateChangedEvent" in blob:
-        dispatch_match_gametoom_state_change(blob)
+        dispatch_match_gameroom_state_change(blob)
     elif "block_title" in blob and blob["block_title"] == "Event.MatchCreated":
         parsers.parse_match_created(blob)
 
 
 # MID-LEVER DISPATCHERS: first depth level of a blob
 @util.debug_log_trace
-def dispatch_match_gametoom_state_change(blob):
+def dispatch_match_gameroom_state_change(blob):
     state_type = blob['matchGameRoomStateChangedEvent']['gameRoomInfo']['stateType']
     if state_type == "MatchGameRoomStateType_Playing":
         parsers.parse_match_playing(blob)
@@ -59,7 +72,9 @@ def dispatch_jsonrpc_method(blob):
     # from app.mtga_app import mtga_watch_app
     # dont_care_rpc_methods = ['Event.DeckSelect', "Log.Info", "Deck.GetDeckLists", "Quest.CompletePlayerQuest"]
     # NOTE: pretty sure these are all useless. Just metadata about RPC methods being called, maybe?
-    pass
+    # ANOTHER NOTE: turns out this might be the only way to get the deck used in a DC. Not useless!
+    if "method" in blob and blob["method"] == "DirectGame.Challenge":
+        parsers.parse_direct_challenge_queued(blob)
 
 
 @util.debug_log_trace
@@ -70,9 +85,6 @@ def dispatch_gre_to_client(blob):
         message_type = message["type"]
         if message_type in dont_care_types:
             pass
-        # TODO: fix this once sideboard logs are also fixed
-        # elif message_type == "GREMessageType_SubmitDeckReq":
-        #     parsers.parse_sideboard_submit(message["submitDeckReq"])
         elif message_type in ["GREMessageType_GameStateMessage", "GREMessageType_QueuedGameStateMessage"]:
             game_state_message = message['gameStateMessage']
             try:
